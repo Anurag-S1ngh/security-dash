@@ -232,6 +232,7 @@ async def project_reports_api(project: str):
             "cves": report.cves,
             "title": report.title,
             "message_id": report.message_id,
+            "tag": report.security_team_name,
             "asf_member_link": report.asf_member_link,
             "state": report.state,
             "date": report.date.isoformat(),
