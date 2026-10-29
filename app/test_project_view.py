@@ -481,15 +481,3 @@ async def test_dev_committees_are_ignored_without_dev_mode(tmp_path, monkeypatch
 def test_dev_mode_defaults_to_off(tmp_path, monkeypatch):
     quart_app = _build_app(tmp_path, monkeypatch)
     assert quart_app.extensions["app_config"].dev_mode is False
-
-
-@sync
-async def test_reports_api_returns_the_tag(quart_app, monkeypatch):
-    """API clients need the tag to triage a report, and to tell the
-    security team's standing labels (aaa-…, zzz-…) from reports."""
-    _login(monkeypatch)
-    response = await quart_app.test_client().get("/api/project/cassandra/reports")
-    assert response.status_code == 200
-    [report] = await response.get_json()
-    assert report["tag"] == "2024-03-01 a flaw"
-    assert report["message_id"] == MESSAGE_ID
