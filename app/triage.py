@@ -39,8 +39,11 @@ import urllib
 class TriageAction(enum.StrEnum):
     ACCEPT = "accept"
     REJECT = "reject"
+    DUPLICATE = "duplicate"
 
 MAX_FEEDBACK_LENGTH = 10_000
+_DUPLICATE_SENTINEL = "\x00"
+MAX_DUPLICATE_OF_LENGTH = 200
 
 # The notification API owns the real email template; these are the static parts
 # of it, so the PMC can see what the reporter will receive before submitting.
@@ -51,12 +54,19 @@ _OPENING = "Thank you for your report."
 _DECISION_PARAGRAPHS: dict[TriageAction, str] = {
     TriageAction.ACCEPT: (
         "The PMC has confirmed the issue you reported as a vulnerability and is "
-        "working on a fix. You will be notified once a release containing the fix "
-        "is available, and are asked to keep the report confidential until then."
+        "working on a fix. "
+        "You will be notified once a release containing the fix is available, "
+        "and are asked to keep the report confidential until then."
     ),
     TriageAction.REJECT: (
         "The PMC has determined that the issue you reported is NOT a vulnerability "
         "in Apache {project}."
+    ),
+    TriageAction.DUPLICATE: (
+        "The PMC has confirmed the issue you reported as a vulnerability, a duplicate "
+        "of an already-tracked report ({duplicate_of}), and is working on a fix. "
+        "You will be notified once a release containing the fix is available, "
+        "and are asked to keep the report confidential until then."
     ),
 }
 _CLOSING_GREETING = "Kind regards,"
@@ -72,6 +82,12 @@ class MessagePreview:
     opening: str
     decisions: dict[str, str]
     """The paragraph each action produces, keyed by action value."""
+    duplicate_prefix: str
+    """Text of the duplicate paragraph up to where the PMC's typed CVE/
+    reference belongs. duplicate_suffix picks up right after it, so the
+    template can render the actual input inline in the preview — what is
+    shown is exactly what will be sent, no separate copy to keep in sync."""
+    duplicate_suffix: str
     closing: str
     """Sign-off, naming the PMC member who took the decision."""
 
@@ -93,12 +109,31 @@ def _display_project(project: str) -> str:
     how the project is named in the email."""
     return project.capitalize()
 
-def message_preview(project: str, report: Report, signatory: str = "") -> MessagePreview:
+def message_preview(
+    project: str,
+    report: Report,
+    signatory: str = "",
+    duplicate_of: str = "",
+) -> MessagePreview:
     """The email the notification API will send once `report` is triaged.
 
     `signatory` is the name the decision goes out under: the PMC member filling
-    in the form.
+    in the form. `duplicate_of` is the CVE id or reference to the original
+    report, shown in the preview when the PMC picks the duplicate action; it is
+    ignored for the other actions.
     """
+    decisions = {
+        action.value: paragraph.format(
+            project=_display_project(project),
+            duplicate_of=duplicate_of or "another report",
+        )
+        for action, paragraph in _DECISION_PARAGRAPHS.items()
+    }
+    duplicate_prefix, duplicate_suffix = _DECISION_PARAGRAPHS[TriageAction.DUPLICATE].format(
+        project=_display_project(project),
+        duplicate_of=_DUPLICATE_SENTINEL,
+    ).split(_DUPLICATE_SENTINEL)
+
     return MessagePreview(
         to=report.reporter.tooltip if report.reporter else "the reporter",
         cc=_cc_addresses(project),
@@ -107,16 +142,16 @@ def message_preview(project: str, report: Report, signatory: str = "") -> Messag
             reporter=report.reporter.display_name if report.reporter else "reporter"
         ),
         opening=_OPENING.format(project=_display_project(project)),
-        decisions={
-            action.value: paragraph.format(project=_display_project(project))
-            for action, paragraph in _DECISION_PARAGRAPHS.items()
-        },
+        decisions=decisions,
+        duplicate_prefix=duplicate_prefix,
+        duplicate_suffix=duplicate_suffix,
         closing=_closing(project, signatory),
     )
 
 CONFIRMATION_MESSAGES: dict[TriageAction, str] = {
-    TriageAction.ACCEPT: "Thanks for triaging and accepting this report! Notification emails have been sent, please allow for a day or so before this acceptance is reflected in this dashboard.",
-    TriageAction.REJECT: "Thanks for triaging and rejecting this report!  Notification emails have been sent, please allow for a day or so before this acceptance is reflected in this dashboard."
+    TriageAction.ACCEPT: "Thanks for triaging and accepting this report! Notification emails have been sent, please allowfor a day or so before this acceptance is reflected in this dashboard.",
+    TriageAction.REJECT: "Thanks for triaging and rejecting this report! Notification emails have been sent, please allow for a day or so before this acceptance is reflected in this dashboard.",
+    TriageAction.DUPLICATE: "Thanks for triaging and accepting this report as a duplicate! Notification emails have been sent, please allow for a day or so before this acceptance is reflected in this dashboard.",
 }
 
 class TriageError(Exception):
@@ -137,6 +172,9 @@ class TriageDecision:
     action: TriageAction
     feedback: str
     """Feedback for the reporter, as typed by the PMC. May be empty."""
+    duplicate_of: str
+    """CVE id or reference to the original report. Required when action is
+    DUPLICATE, empty otherwise."""
     uid: str
     """ASF id of the user who took the decision."""
     name: str
@@ -185,11 +223,23 @@ def parse_decision(
     if len(feedback) > MAX_FEEDBACK_LENGTH:
         raise TriageError(f"feedback is longer than {MAX_FEEDBACK_LENGTH} characters", status=413)
 
+    duplicate_of = None
+    if action == TriageAction.DUPLICATE:
+        duplicate_of = payload.get("duplicate_of") or ""
+        if not isinstance(duplicate_of, str):
+            raise TriageError("'duplicate_of' must be text")
+        duplicate_of = duplicate_of.strip()
+        if len(duplicate_of) > MAX_DUPLICATE_OF_LENGTH:
+            raise TriageError(f"'duplicate_of' is longer than {MAX_DUPLICATE_OF_LENGTH} characters", status=413)
+        if not duplicate_of:
+            raise TriageError("'duplicate_of' is required when action is 'duplicate'")
+
     return TriageDecision(
         project=project,
         report=report,
         action=action,
         feedback=feedback,
+        duplicate_of=duplicate_of,
         uid=uid,
         name=name,
         at=now or datetime.datetime.now(tz=datetime.timezone.utc),
@@ -209,6 +259,7 @@ class AcceptReport:
     message_id: str
     response: str
     """Feedback for the reporter; may be empty."""
+    duplicate_of: str
 
 @dataclasses.dataclass(frozen=True)
 class RejectReport:
@@ -224,10 +275,12 @@ class RejectReport:
     message_id: str
     response: str
     """Feedback for the reporter; may be empty."""
+    duplicate_of: str
 
 _ENDPOINTS: dict[TriageAction, tuple[str, type]] = {
     TriageAction.ACCEPT: ("/triage/accept", AcceptReport),
     TriageAction.REJECT: ("/triage/reject", RejectReport),
+    TriageAction.DUPLICATE: ("/triage/accept", AcceptReport),
 }
 
 SUBMIT_TIMEOUT_SECONDS = 30
@@ -253,6 +306,7 @@ async def submit(decision: TriageDecision) -> None:
         tag=decision.report.security_team_name,
         message_id=decision.report.message_id,
         response=decision.feedback,
+        duplicate_of=decision.duplicate_of,
     )
 
     timeout = aiohttp.ClientTimeout(total=SUBMIT_TIMEOUT_SECONDS)
