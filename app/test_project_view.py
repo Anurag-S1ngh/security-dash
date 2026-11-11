@@ -360,6 +360,22 @@ async def test_triage_json_success_includes_a_redirect(quart_app, monkeypatch):
 
 
 @sync
+async def test_triage_json_success_shows_a_confirmation_on_the_next_page(quart_app, monkeypatch):
+    _login(monkeypatch)
+    client = quart_app.test_client()
+    response = await _triage(
+        client,
+        {"message_id": MESSAGE_ID, "action": "accept", "tag": "2024-03-01 a flaw"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 200
+    follow_up = await client.get("/project/cassandra")
+    body = await follow_up.get_data(as_text=True)
+    assert "Thanks for triaging and accepting this report" in body
+
+
+@sync
 async def test_cross_site_form_post_is_refused(quart_app, monkeypatch):
     _login(monkeypatch)
     response = await _triage(

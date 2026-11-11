@@ -302,11 +302,15 @@ async def project_triage_api(project: str):
     )
 
 async def _triage_response(project: str, message: str, category: str, status: int, **details: Any):
-    if _wants_json():
+    wants_json = _wants_json()
+    # JSON callers follow the redirect, so a success has to survive it; errors
+    # are shown in the form and must not linger into the next page load.
+    if category == "success" or not wants_json:
+        await quart.flash(message, category)
+    if wants_json:
         return quart.jsonify(
             {"status": category, "message": message, "redirect": _triage_view(project), **details}
         ), status
-    await quart.flash(message, category)
     return quart.redirect(_triage_view(project), code=303)
 
 def _triage_view(project: str) -> str:
