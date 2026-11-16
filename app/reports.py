@@ -113,6 +113,15 @@ class Report:
         return self.timestamp.date()
 
     @property
+    def anchor(self) -> str:
+        """Stable, URL-safe id this report can be linked to.
+
+        Derived from the message id of the thread, so it stays the same across
+        reloads and changes of title, state or date."""
+        digest = hashlib.sha1(self.message_id.encode()).hexdigest()
+        return f"report-{digest[:12]}"
+
+    @property
     def sanitized_title(self) -> str:
         cleaned = re.sub(r"[^A-Za-z0-9 .\-()]", " ", self.title)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
