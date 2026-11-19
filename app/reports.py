@@ -119,8 +119,9 @@ class Report:
 
         Derived from the message id of the thread, so it stays the same across
         reloads and changes of title, state or date."""
-        digest = base64.urlsafe_b64encode(hashlib.sha1(self.message_id.encode()).digest())
-        return f"AS{digest.decode().rstrip('=')[:12]}"
+        digest = base64.b32encode(hashlib.sha256(self.message_id.encode()).digest()).decode()
+        code = digest.rstrip("=")[:12]
+        return "AS-" + "-".join(code[i:i + 4] for i in range(0, 12, 4))
 
     @property
     def sanitized_title(self) -> str:

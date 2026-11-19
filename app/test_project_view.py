@@ -163,7 +163,7 @@ async def test_report_row_has_a_stable_anchor(quart_app, monkeypatch):
     first = await (await client.get("/project/cassandra")).get_data(as_text=True)
     second = await (await client.get("/project/cassandra")).get_data(as_text=True)
 
-    anchor = re.search(r'<tr id="(AS[0-9A-Za-z_-]{12})">', first)
+    anchor = re.search(r'<tr id="(AS-[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4})">', first)
     assert anchor, first
     assert anchor.group(0) in second
     assert re.search(
@@ -180,10 +180,11 @@ async def test_report_anchor_is_derived_from_the_message_id(tmp_path, monkeypatc
     renamed = _build_app(tmp_path, monkeypatch, label="2024-03-05 a reworded flaw")
     body = await (await renamed.test_client().get("/project/cassandra")).get_data(as_text=True)
 
-    anchor = re.search(r'<tr id="(AS[0-9A-Za-z_-]{12})">', body)
+    anchor = re.search(r'<tr id="(AS-[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4})">', body)
     assert anchor
-    expected = base64.urlsafe_b64encode(hashlib.sha1(MESSAGE_ID.encode()).digest()).decode()
-    assert anchor.group(1) == f"AS{expected.rstrip('=')[:12]}"
+    expected = base64.b32encode(hashlib.sha256(MESSAGE_ID.encode()).digest()).decode()
+    expected = "-".join(expected.rstrip("=")[:12][i:i + 4] for i in range(0, 12, 4))
+    assert anchor.group(1) == f"AS-{expected}"
 
 
 @sync
