@@ -16,7 +16,7 @@
       {% for report in reports|sort(attribute='date') %}
       <tr id="{{ report.anchor }}">
         <!-- {{ report.security_team_name }} -->
-        <td class="reports-date"><a href="#{{ report.anchor }}" title="Link to this report">{{ report.date.strftime('%Y-%m-%d') }}</a></td>
+        <td class="reports-date"><a href="#{{ report.anchor }}" title="Link to this report: {{ report.anchor }}">{{ report.date.strftime('%Y-%m-%d') }}</a></td>
         {% if show_subproject %}
         <td class="reports-subproject">{{ report.subproject or "" }}</td>
         {% endif %}

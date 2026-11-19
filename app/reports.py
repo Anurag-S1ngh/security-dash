@@ -16,6 +16,7 @@
 # under the License.
 
 from app import config
+import base64
 import dataclasses
 import datetime
 from email.header import decode_header
@@ -118,8 +119,8 @@ class Report:
 
         Derived from the message id of the thread, so it stays the same across
         reloads and changes of title, state or date."""
-        digest = hashlib.sha1(self.message_id.encode()).hexdigest()
-        return f"report-{digest[:12]}"
+        digest = base64.urlsafe_b64encode(hashlib.sha1(self.message_id.encode()).digest())
+        return f"AS{digest.decode().rstrip('=')[:12]}"
 
     @property
     def sanitized_title(self) -> str:
